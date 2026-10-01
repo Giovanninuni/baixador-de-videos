@@ -10,6 +10,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from editor_audio import EditorAudio
+
 try:
     import yt_dlp
 except ImportError:
@@ -42,17 +44,16 @@ def achar_ffmpeg() -> str | None:
 
 
 class Baixador:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, parent, ffmpeg: str | None, ao_cortar=None):
         self.root = root
-        self.ffmpeg = achar_ffmpeg()
+        self.ffmpeg = ffmpeg
+        self.ao_cortar = ao_cortar
         self.baixando = False
+        self.ultimo: str | None = None
 
-        root.title("Baixador")
-        root.minsize(560, 420)
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(0, weight=1)
-
-        frame = ttk.Frame(root, padding=14)
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+        frame = ttk.Frame(parent, padding=14)
         frame.grid(sticky="nsew")
         frame.columnconfigure(0, weight=1)
 
@@ -112,6 +113,9 @@ class Baixador:
         self.botao = ttk.Button(acoes, text="Baixar", command=self.iniciar)
         self.botao.grid(row=0, column=0, sticky="ew", ipady=4)
         ttk.Button(acoes, text="Abrir pasta", command=self.abrir_pasta).grid(row=0, column=1, padx=(6, 0))
+        self.botao_cortar = ttk.Button(acoes, text="Cortar último ✂", state="disabled",
+                                       command=lambda: self.ao_cortar and self.ao_cortar(self.ultimo))
+        self.botao_cortar.grid(row=0, column=2, padx=(6, 0))
 
         self.progresso = ttk.Progressbar(frame, maximum=100)
         self.progresso.grid(row=6, column=0, sticky="ew")
@@ -228,6 +232,7 @@ class Baixador:
                 partes.append(f"faltam {int(eta)}s")
             self.set_status(f"{self.prefixo}Baixando… " + " · ".join(partes), pct)
         elif d["status"] == "finished":
+            self.ultimo = d.get("filename") or self.ultimo
             self.set_status(f"{self.prefixo}Download concluído, processando…", 100)
 
     def hook_pos(self, d: dict):
@@ -235,6 +240,8 @@ class Baixador:
             nomes = {"FFmpegExtractAudio": "Convertendo para MP3…",
                      "Merger": "Juntando vídeo e áudio…"}
             self.set_status(self.prefixo + nomes.get(d.get("postprocessor"), "Processando…"))
+        elif d["status"] == "finished":
+            self.ultimo = d.get("info_dict", {}).get("filepath") or self.ultimo
 
     @staticmethod
     def erro_amigavel(msg: str) -> str:
@@ -252,6 +259,8 @@ class Baixador:
     def terminar(self, ok: int, falhas: list):
         self.baixando = False
         self.botao.configure(state="normal", text="Baixar")
+        tem_ultimo = bool(self.ultimo and os.path.exists(self.ultimo))
+        self.botao_cortar.configure(state="normal" if tem_ultimo else "disabled")
         if not falhas:
             self.status.set(f"Pronto! {ok} arquivo(s) salvo(s) em {self.destino.get()}")
             self.progresso["value"] = 100
@@ -278,7 +287,26 @@ def main():
         ttk.Style().theme_use("vista")
     except tk.TclError:
         pass
-    Baixador(root)
+    root.title("Baixador")
+    root.minsize(620, 560)
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+
+    ffmpeg = achar_ffmpeg()
+    abas = ttk.Notebook(root)
+    abas.grid(sticky="nsew", padx=6, pady=6)
+    aba_baixar, aba_cortar = ttk.Frame(abas), ttk.Frame(abas)
+    abas.add(aba_baixar, text="  Baixar  ")
+    abas.add(aba_cortar, text="  Cortar áudio  ")
+
+    editor = EditorAudio(root, aba_cortar, ffmpeg)
+
+    def cortar(caminho):
+        abas.select(aba_cortar)
+        editor.abrir(caminho)
+
+    Baixador(root, aba_baixar, ffmpeg, ao_cortar=cortar)
+    root.protocol("WM_DELETE_WINDOW", lambda: (editor.parar(), root.destroy()))
     root.mainloop()
 
 
